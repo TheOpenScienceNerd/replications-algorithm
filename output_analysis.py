@@ -4,6 +4,122 @@ import pandas as pd
 from scipy.stats import t
 import warnings
 
+class OnlineStatistics:
+
+    def __init__(self, data=None, alpha=0.1, decimal_places=2):
+        """
+        Welford’s algorithm for computing a running sample mean and
+        variance. Allowing computation of CIs.
+
+        This is a robust, accurate and old(ish) approach (1960s) that
+        I first read about in Donald Knuth’s art of computer programming vol 2.
+
+        Params:
+        -------
+        data: array-like, optional (default = None)
+            Contains an initial data sample.
+
+        alpha: float
+            To compute 100(1 - alpha) confidence interval
+
+        decimal_places: int, optional (default=2)
+            Summary decimal places.
+        """
+
+        self.n = 0
+        self.mean = None
+        # sum of squares of differences from the current mean
+        self._sq = None
+        self.alpha = alpha
+
+        if isinstance(data, np.ndarray):
+            for x in data:
+                self.update(x)
+
+        self.dp = decimal_places
+
+    @property
+    def variance(self):
+        """
+        Sample variance of data
+        Sum of squares of differences from the current mean divided by n - 1
+        """
+        return self._sq / (self.n - 1)
+
+    @property
+    def std(self):
+        """
+        Standard deviation of data
+        """
+        return np.sqrt(self.variance)
+
+    @property
+    def std_error(self):
+        """
+        Standard error of the mean
+        """
+        return self.std / np.sqrt(self.n)
+
+    @property
+    def half_width(self):
+        """
+        Confidence interval half width
+        """
+        dof = self.n - 1
+        t_value = t.ppf(1 - (self.alpha / 2), dof)
+        return t_value * self.std_error
+
+    @property
+    def lci(self):
+        """
+        Lower confidence interval bound
+        """
+        return self.mean - self.half_width
+
+    @property
+    def uci(self):
+        """
+        Lower confidence interval bound
+        """
+        return self.mean + self.half_width
+
+    @property
+    def deviation(self):
+        """
+        Precision of the confidence interval expressed as the
+        percentage deviation of the half width from the mean.
+        """
+        return self.half_width / self.mean
+
+    def update(self, x):
+        """
+        Running update of mean and variance implemented using Welford's
+        algorithm (1962).
+
+        See Knuth. D `The Art of Computer Programming` Vol 2. 2nd ed. Page 216.
+
+        Params:
+        ------
+        x: float
+            A new observation
+        """
+        self.n += 1
+
+        # init values
+        if self.n == 1:
+            self.mean = x
+            self._sq = 0
+        else:
+            # compute the updated mean
+            updated_mean = self.mean + ((x - self.mean) / self.n)
+
+            # update the sum of squares of differences from the current mean
+            self._sq += (x - self.mean) * (x - updated_mean)
+
+            # update the tracked mean
+            self.mean = updated_mean
+
+
 def confidence_interval_method(replications, alpha=0.05, desired_precision=0.05, 
                                min_rep=5, decimal_place=2):
     '''
@@ -43,40 +159,28 @@ def confidence_interval_method(replications, alpha=0.05, desired_precision=0.05,
     
     '''
     n = len(replications)
-    cumulative_mean = [replications[0]]
-    running_var = [0.0]
-    for i in range(1, n):
-        cumulative_mean.append(cumulative_mean[i-1] + \
-                       (replications[i] - cumulative_mean[i-1] ) / (i+1))
-        
-        # running biased variance
-        running_var.append(running_var[i-1] + (replications[i] 
-                                               - cumulative_mean[i-1]) \
-                            * (replications[i] - cumulative_mean[i]))
-        
-    # unbiased std dev = running_var / (n - 1)
-    with np.errstate(divide='ignore', invalid='ignore'):
-        running_std = np.sqrt(running_var / np.arange(n))
     
-    # half width of interval
-    dof = len(replications) - 1
-    t_value = t.ppf(1 - (alpha / 2),  dof)    
-    with np.errstate(divide='ignore', invalid='ignore'):
-        std_error = running_std / np.sqrt(np.arange(1, n+1))
-        
-    half_width = t_value * std_error
-        
-    # upper and lower confidence interval
-    upper = cumulative_mean + half_width
-    lower = cumulative_mean - half_width
+    stdev = [np.nan] * 2 
+    lower = [np.nan] * 2
+    upper = [np.nan] * 2
+    dev = [np.nan] * 2
+
+   
+    # online statistical and log first cumulative mean
+    stats = OnlineStatistics(alpha=alpha, data=replications[:2])
+    cumulative_mean = [replications[0], stats.mean]
     
-    # Mean deviation
-    with np.errstate(divide='ignore', invalid='ignore'):
-        deviation = (half_width / cumulative_mean)
-    
-    # commbine results into a single dataframe
+    for i in range(2, n):
+        stats.update(replications[i])
+        cumulative_mean.append(stats.mean)
+        stdev.append(stats.std)
+        lower.append(stats.lci)
+        upper.append(stats.uci)
+        dev.append(stats.deviation)
+                    
+    # combine results into a single dataframe
     results = pd.DataFrame([replications, cumulative_mean, 
-                            running_std, lower, upper, deviation]).T
+                            stdev, lower, upper, dev]).T
     results.columns = ['Mean', 'Cumulative Mean', 'Standard Deviation', 
                        'Lower Interval', 'Upper Interval', '% deviation']
     results.index = np.arange(1, n+1)
@@ -91,7 +195,6 @@ def confidence_interval_method(replications, alpha=0.05, desired_precision=0.05,
         message = 'WARNING: the replications do not reach desired precision'
         warnings.warn(message)
         n_reps = -1 
-
     
     return n_reps, results.round(decimal_place)
         
