@@ -1,4 +1,4 @@
-name: tosn_rep_alg
+name: rep_alg
 channels:
   - conda-forge
 dependencies:
@@ -16,4 +16,4 @@ dependencies:
   - scipy=1.14.0
   - seaborn=0.13.2
   - simpy=4.1.1
-  - sim-tools=0.5.0
+  - sim-tools=0.6.1
