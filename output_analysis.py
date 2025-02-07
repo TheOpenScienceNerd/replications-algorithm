@@ -77,7 +77,7 @@ class OnlineStatistics:
         self._sq = None
         self.alpha = alpha
         self._observers = []
-        if not observer is None:
+        if observer is not None:
             self.register_observer(observer)
         
         if isinstance(data, np.ndarray):
