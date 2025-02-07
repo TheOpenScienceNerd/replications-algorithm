@@ -308,10 +308,11 @@ def confidence_interval_method(
     results = observer.summary_table()
     
     # get the smallest no. of reps where deviation is less than precision target
+    
     try:
         n_reps = results.iloc[min_rep:].loc[results['% deviation'] 
                              <= desired_precision].iloc[0].name
-    except:
+    except IndexError:
         # no replications with desired precision
         message = 'WARNING: the replications do not reach desired precision'
         warnings.warn(message)
