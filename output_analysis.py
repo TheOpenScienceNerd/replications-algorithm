@@ -1,20 +1,61 @@
+"""
+module: output_analysis
+
+Provides methods for the confidence interval method for selecting
+the number of replications to run with a Discrete-Event Simulation.
+"""
+
 import plotly.graph_objects as go
 import numpy as np
 import pandas as pd
 from scipy.stats import t
 import warnings
 
-class OnlineStatistics:
+from typing import Protocol, runtime_checkable, Optional
 
-    def __init__(self, data=None, alpha=0.1, decimal_places=2):
+OBSERVER_INTERFACE_ERROR = "Observers of OnlineStatistics must implement " \
++ "ReplicationObserver interface. i.e. " \
++ "update(results: OnlineStatistics) -> None"
+
+
+@runtime_checkable
+class ReplicationObserver(Protocol):
+    """
+    Interface for an observer of an instance of the ReplicationsAnalyser
+    """
+    def update(self, results) -> None:
         """
-        Welford’s algorithm for computing a running sample mean and
-        variance. Allowing computation of CIs.
+        Add an observation of a replication
 
-        This is a robust, accurate and old(ish) approach (1960s) that
-        I first read about in Donald Knuth’s art of computer programming vol 2.
+        Parameters:
+        -----------
+        results: OnlineStatistic
+            The current replication to observe.
+        """
+        pass
 
-        Params:
+
+class OnlineStatistics:
+    """
+    Welford’s algorithm for computing a running sample mean and
+    variance. Allowing computation of CIs and half width % deviation
+    from the mean.
+
+    This is a robust, accurate and old(ish) approach (1960s) that
+    I first read about in Donald Knuth’s art of computer programming vol 2.
+    """
+
+    def __init__(
+        self, 
+        data: Optional[np.ndarray] = None, 
+        alpha: Optional[float] = 0.1,
+        observer: Optional[ReplicationObserver] = None
+    ) -> None:
+        """
+        Initiaise Welford’s algorithm for computing a running sample mean and
+        variance. 
+        
+        Parameters:
         -------
         data: array-like, optional (default = None)
             Contains an initial data sample.
@@ -22,46 +63,68 @@ class OnlineStatistics:
         alpha: float
             To compute 100(1 - alpha) confidence interval
 
-        decimal_places: int, optional (default=2)
-            Summary decimal places.
-        """
+        observer: ReplicationObserver, optional (default=None)
+            A user may optionally track the updates to the statistics using a
+            ReplicationObserver (e.g. ReplicationTabuliser). This allows further
+            tabular or visual analysis or saving results to file if required.
 
+        """
+        
         self.n = 0
+        self.x_i = None 
         self.mean = None
         # sum of squares of differences from the current mean
         self._sq = None
         self.alpha = alpha
-
+        self._observers = []
+        if not observer is None:
+            self.register_observer(observer)
+        
         if isinstance(data, np.ndarray):
             for x in data:
                 self.update(x)
 
-        self.dp = decimal_places
+    def register_observer(self, observer: ReplicationObserver) -> None:
+        """
+        observer: ReplicationRecorder, optional (default = None)
+            Include a method for recording the replication results at each 
+            update. Part of observer pattern. If None then no results are 
+            observed.
+            
+        """
+        if not isinstance(observer, ReplicationObserver):
+            raise ValueError(OBSERVER_INTERFACE_ERROR)
+        
+        self._observers.append(observer)
 
     @property
-    def variance(self):
+    def variance(self) -> float:
         """
         Sample variance of data
         Sum of squares of differences from the current mean divided by n - 1
         """
+        
         return self._sq / (self.n - 1)
 
     @property
-    def std(self):
+    def std(self) -> float:
         """
         Standard deviation of data
         """
-        return np.sqrt(self.variance)
+        if self.n > 2:
+            return np.sqrt(self.variance)
+        else:
+            return np.nan
 
     @property
-    def std_error(self):
+    def std_error(self) -> float:
         """
         Standard error of the mean
         """
         return self.std / np.sqrt(self.n)
 
     @property
-    def half_width(self):
+    def half_width(self) -> float:
         """
         Confidence interval half width
         """
@@ -70,28 +133,37 @@ class OnlineStatistics:
         return t_value * self.std_error
 
     @property
-    def lci(self):
+    def lci(self) -> float:
         """
         Lower confidence interval bound
         """
-        return self.mean - self.half_width
-
+        if self.n > 2:
+            return self.mean - self.half_width
+        else:
+            return np.nan
+    
     @property
-    def uci(self):
+    def uci(self) -> float:
         """
         Lower confidence interval bound
         """
-        return self.mean + self.half_width
+        if self.n > 2:
+            return self.mean + self.half_width
+        else:
+            return np.nan
 
     @property
-    def deviation(self):
+    def deviation(self) -> float:
         """
         Precision of the confidence interval expressed as the
         percentage deviation of the half width from the mean.
         """
-        return self.half_width / self.mean
+        if self.n > 2:
+            return self.half_width / self.mean
+        else:
+            return np.nan
 
-    def update(self, x):
+    def update(self, x: float) -> None:
         """
         Running update of mean and variance implemented using Welford's
         algorithm (1962).
@@ -104,7 +176,8 @@ class OnlineStatistics:
             A new observation
         """
         self.n += 1
-
+        self.x_i = x
+        
         # init values
         if self.n == 1:
             self.mean = x
@@ -119,9 +192,74 @@ class OnlineStatistics:
             # update the tracked mean
             self.mean = updated_mean
 
+        self.notify()
 
-def confidence_interval_method(replications, alpha=0.05, desired_precision=0.05, 
-                               min_rep=5, decimal_place=2):
+    def notify(self) -> None:
+        """
+        Notify any observers that a update has taken place.
+        """
+        for observer in self._observers:
+            observer.update(self)
+
+
+class ReplicationTabulizer:
+    """
+    Record the replication results from an instance of ReplicationsAlgorithm
+    in a pandas DataFrame.
+    
+    Implement as the part of observer pattern. Provides a summary frame 
+    equivalent to the output of a confidence_interval_method
+    """
+    def __init__(self):
+        # to track online stats
+        self.stdev = []
+        self.lower = []
+        self.upper = []
+        self.dev = []
+        self.cumulative_mean = []
+        self.x_i = []
+        self.n = 0
+
+    def update(self, results: OnlineStatistics) -> None:
+        """
+        Add an observation of a replication
+
+        Parameters:
+        -----------
+        results: OnlineStatistic
+            The current replication to observe.
+        """
+        self.x_i.append(results.x_i)
+        self.cumulative_mean.append(results.mean)
+        self.stdev.append(results.std)
+        self.lower.append(results.lci)
+        self.upper.append(results.uci)
+        self.dev.append(results.deviation)
+        self.n += 1
+
+    def summary_table(self) -> pd.DataFrame:
+        """
+        Return a dataframe of results equivalent to the confidence interval
+        method.
+        """
+        # combine results into a single dataframe
+        results = pd.DataFrame([self.x_i, self.cumulative_mean, 
+                                self.stdev, self.lower, self.upper, self.dev]).T
+        results.columns = ['Mean', 'Cumulative Mean', 'Standard Deviation', 
+                           'Lower Interval', 'Upper Interval', '% deviation']
+        results.index = np.arange(1, self.n+1)
+        results.index.name = 'replications'
+
+        return results
+
+
+def confidence_interval_method(
+    replications,                          
+    alpha: Optional[float] = 0.05, 
+    desired_precision: Optional[float] = 0.05, 
+    min_rep: Optional[int] = 5, 
+    decimal_places: Optional[int] = 2
+):
     '''
     The confidence interval method for selecting the number of replications
     to run in a simulation.
@@ -158,33 +296,16 @@ def confidence_interval_method(replications, alpha=0.05, desired_precision=0.05,
         tuple: int, pd.DataFrame
     
     '''
-    n = len(replications)
-    
-    stdev = [np.nan] * 2 
-    lower = [np.nan] * 2
-    upper = [np.nan] * 2
-    dev = [np.nan] * 2
+    # welford's method to track cumulative mean and construct CIs at each rep
+    # track the process and construct data table using ReplicationTabuliser
+    observer = ReplicationTabulizer()
+    stats = OnlineStatistics(alpha=alpha, data=replications[:2], observer=observer)
 
-   
-    # online statistical and log first cumulative mean
-    stats = OnlineStatistics(alpha=alpha, data=replications[:2])
-    cumulative_mean = [replications[0], stats.mean]
-    
-    for i in range(2, n):
+    # iteratively update.
+    for i in range(2, len(replications)):
         stats.update(replications[i])
-        cumulative_mean.append(stats.mean)
-        stdev.append(stats.std)
-        lower.append(stats.lci)
-        upper.append(stats.uci)
-        dev.append(stats.deviation)
-                    
-    # combine results into a single dataframe
-    results = pd.DataFrame([replications, cumulative_mean, 
-                            stdev, lower, upper, dev]).T
-    results.columns = ['Mean', 'Cumulative Mean', 'Standard Deviation', 
-                       'Lower Interval', 'Upper Interval', '% deviation']
-    results.index = np.arange(1, n+1)
-    results.index.name = 'replications'
+
+    results = observer.summary_table()
     
     # get the smallest no. of reps where deviation is less than precision target
     try:
@@ -196,7 +317,7 @@ def confidence_interval_method(replications, alpha=0.05, desired_precision=0.05,
         warnings.warn(message)
         n_reps = -1 
     
-    return n_reps, results.round(decimal_place)
+    return n_reps, results.round(decimal_places)
         
 
 
