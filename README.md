@@ -2,6 +2,8 @@
 
 The materials in this repo provide an implementation of the Replications Algorithm to automatically select the no. of replications for a Discrete-Event Simulation.
 
+The main tutorial can be found in the [automated_reps.ipynb](./automated_reps.ipynb) notebook.
+
 ## License
 
 The materials have been made available under an [MIT license](LICENCE).  The materials are as-is with no liability for the author. Please provide credit if you reuse the code in your own work.
