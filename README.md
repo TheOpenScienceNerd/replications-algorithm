@@ -1,6 +1,10 @@
+
+[![ORCID: Monks](https://img.shields.io/badge/Tom_Monks_ORCID-0000--0003--2631--4481-brightgreen)](https://orcid.org/0000-0003-2631-4481)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 # The replications algorithm for Discrete-Event Simulation
 
-The materials in this repo provide an implementation of the Replications Algorithm to automatically select the no. of replications for a Discrete-Event Simulation.
+The materials in this repo provide a Python implementation of the Replications Algorithm to automatically select the no. of replications for a Discrete-Event Simulation.
 
 The main tutorial can be found in the [automated_reps.ipynb](./automated_reps.ipynb) notebook.
 
